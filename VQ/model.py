@@ -94,7 +94,7 @@ class Quantizer(nn.Module):
         with torch.no_grad():
             dist = (
                 z_e_flat.pow(2).sum(1, keepdim=True)        # ||z||^2
-                - z_e_flat @ self.e.weight.T                # -2z*e
+                - 2 * z_e_flat @ self.e.weight.T            # -2z*e
                 + self.e.weight.pow(2).sum(1, keepdim=True) # ||e||^2
             )
         indices_flat = dist.argmin(1)
@@ -130,7 +130,7 @@ class QuantizerEMA(nn.Module):
         with torch.no_grad():
             dist = (
                 z_e_flat.pow(2).sum(1, keepdim=True) # ||z||^2
-                - z_e_flat @ self.e.T                # -2z*e
+                - 2 * z_e_flat @ self.e.T            # -2z*e
                 + self.e.pow(2).sum(1, keepdim=True) # ||e||^2
             )
         indices_flat = dist.argmin(1)
