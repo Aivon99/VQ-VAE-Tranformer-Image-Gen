@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-# these are the hyperparameters used in the original VQ-VAE paper (see section 4.1)
 HIDDEN_CHANNELS = 256
 LATENT_DIM = 8 * 8
 EMBEDDING_DIM = 64
@@ -94,7 +93,7 @@ class Quantizer(nn.Module):
         # codebook dictionary
         if not self.use_EMA:
             self.register_parameter('e', nn.Parameter(torch.randn(NUM_EMBEDDINGS, EMBEDDING_DIM)))
-        else: 
+        else:
             self.register_buffer('e', torch.randn(NUM_EMBEDDINGS, EMBEDDING_DIM))
 
             # EMA running cluster counts and sums
@@ -130,7 +129,7 @@ class Quantizer(nn.Module):
                 # EMA updates
                 self.N = self.decay * self.N + (1 - self.decay) * n_i
                 self.m = self.decay * self.m + (1 - self.decay) * m_i
-                self.e = self.m / (self.N.unsqueeze(1) + 1e8)
+                self.e = self.m / (self.N.unsqueeze(1) + 1e-8)
         
         z_q = nn.functional.embedding(indices_flat, self.e).view(B, H, W, EMBEDDING_DIM) # (B, H, W, embedding_dim)
         return z_q.permute(0, 3, 1, 2).contiguous()                                      # (B, embedding_dim, H, W)
@@ -163,9 +162,10 @@ class VQ_VAE(nn.Module):
             x = self.compute_latents(x)
             return self.decoder(x)
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """
-        64x64 image tensor -> training_loss
+        64x64 image tensor -> reconstruction_loss, commitment_loss, codebook_loss\\
+        if use_EMA=True, codebook_loss is None
         """
         z_e = self.encoder(x)
         z_q = self.quantizer(z_e)
@@ -179,6 +179,6 @@ class VQ_VAE(nn.Module):
         commitment_loss = nn.functional.mse_loss(z_e, z_q.detach())
         if self.use_EMA:
             codebook_loss = nn.functional.mse_loss(z_e.detach(), z_q)
-            return reconstruction_loss + codebook_loss + self.beta * commitment_loss
+            return reconstruction_loss, commitment_loss, codebook_loss
         else:
-            return reconstruction_loss + self.beta * commitment_loss
+            return reconstruction_loss, commitment_loss, None
