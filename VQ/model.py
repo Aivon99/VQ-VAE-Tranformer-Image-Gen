@@ -125,7 +125,7 @@ class Quantizer(nn.Module):
         """
         8x8 index tensor -> 8x8 latent tensor
         """
-        return nn.functional.embedding(x, self.e)
+        return nn.functional.embedding(x, self.e).permute(0, 3, 1, 2).contiguous()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # flatten the embeddings along batch size, height, and width (B, embedding_dim, H, W) -> (BHW, embedding_dim)
