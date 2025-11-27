@@ -92,11 +92,10 @@ class Quantizer(nn.Module):
         self.use_EMA = use_EMA
 
         # codebook dictionary
-        self.e = torch.randn(NUM_EMBEDDINGS, EMBEDDING_DIM)
         if not self.use_EMA:
-            self.register_parameter('e', nn.Parameter(self.e))
+            self.register_parameter('e', nn.Parameter(torch.randn(NUM_EMBEDDINGS, EMBEDDING_DIM)))
         else: 
-            self.register_buffer('e', self.e)
+            self.register_buffer('e', torch.randn(NUM_EMBEDDINGS, EMBEDDING_DIM))
 
             # EMA running cluster counts and sums
             self.decay = decay
