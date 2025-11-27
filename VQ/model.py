@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+# these are the hyperparameters used in the original VQ-VAE paper (see section 4.1)
 HIDDEN_CHANNELS = 256
 LATENT_DIM = 8 * 8
 EMBEDDING_DIM = 64
@@ -57,7 +58,7 @@ class Decoder(nn.Module):
         super().__init__()
         self.network = nn.Sequential(
             # 8x8 latents
-            nn.Conv2d(in_channels=EMBEDDING_DIM, out_channels=HIDDEN_CHANNELS, kernel_size=1),   
+            nn.Conv2d(in_channels=EMBEDDING_DIM, out_channels=HIDDEN_CHANNELS, kernel_size=1),
             # 8x8 hidden
             ResidualBlock(),
             nn.ConvTranspose2d(in_channels=HIDDEN_CHANNELS, out_channels=HIDDEN_CHANNELS, kernel_size=4, stride=2, padding=1),
@@ -101,7 +102,25 @@ class Quantizer(nn.Module):
             expected_count = batch_size * LATENT_DIM / NUM_EMBEDDINGS
             self.register_buffer('N', torch.full((NUM_EMBEDDINGS,), expected_count))
             self.register_buffer('m', self.e.clone() * expected_count)
-    
+
+    def nearest_neighbor_indices(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        64x64 image tensor -> 8x8 index tensor
+        """
+        # flatten the embeddings along batch size, height, and width (B, embedding_dim, H, W) -> (BHW, embedding_dim)
+        B, _, H, W = x.shape
+        z_e_flat = x.permute(0, 2, 3, 1).reshape(-1, EMBEDDING_DIM)
+
+        # to calculate pairwise distance, use ||z - e||^2 = ||z||^2 - 2z*e + ||e||^2
+        with torch.no_grad():
+            dist = (
+                z_e_flat.pow(2).sum(dim=1, keepdim=True) # ||z||^2 (BHW, 1)
+                + self.e.pow(2).sum(dim=1).unsqueeze(0)  # ||e||^2 (1, NUM_EMBEDDING)
+                - 2 * z_e_flat @ self.e.T                # -2z*e   (BHW, NUM_EMBEDDING)
+            )
+        indices_flat = dist.argmin(1)                                   # (BHW,)
+        return indices_flat.view(B, H, W).permute(0, 1, 2).contiguous() # (B, H, W)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # flatten the embeddings along batch size, height, and width (B, embedding_dim, H, W) -> (BHW, embedding_dim)
         B, _, H, W = x.shape
@@ -130,7 +149,7 @@ class Quantizer(nn.Module):
                 self.N = self.decay * self.N + (1 - self.decay) * n_i
                 self.m = self.decay * self.m + (1 - self.decay) * m_i
                 self.e = self.m / (self.N.unsqueeze(1) + 1e-8)
-        
+
         z_q = nn.functional.embedding(indices_flat, self.e).view(B, H, W, EMBEDDING_DIM) # (B, H, W, embedding_dim)
         return z_q.permute(0, 3, 1, 2).contiguous()                                      # (B, embedding_dim, H, W)
 
@@ -146,6 +165,14 @@ class VQ_VAE(nn.Module):
         self.use_EMA = use_EMA
         self.beta = beta
 
+    def compute_indices(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        64x64 image tensor -> 8x8 index tensor (without computing gradients)
+        """
+        with torch.no_grad():
+            x = self.encoder(x)
+            return self.quantizer.nearest_neighbor_indices(x)
+
     def compute_latents(self, x: torch.Tensor) -> torch.Tensor:
         """
         64x64 image tensor -> 8x8 quantized latent tensor (without computing gradients)
@@ -153,7 +180,7 @@ class VQ_VAE(nn.Module):
         with torch.no_grad():
             x = self.encoder(x)
             return self.quantizer(x)
-    
+
     def reconstruct(self, x: torch.Tensor) -> torch.Tensor:
         """
         64x64 image tensor -> 64x64 reconstructed image tensor (without computing gradients)
@@ -161,7 +188,7 @@ class VQ_VAE(nn.Module):
         with torch.no_grad():
             x = self.compute_latents(x)
             return self.decoder(x)
-    
+
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """
         64x64 image tensor -> reconstruction_loss, commitment_loss, codebook_loss\\
@@ -175,7 +202,7 @@ class VQ_VAE(nn.Module):
         reconstructed = self.decoder(z_q_st)
 
         # compute loss
-        reconstruction_loss = nn.functional.binary_cross_entropy(reconstructed, x)
+        reconstruction_loss = nn.functional.mse_loss(reconstructed, x)
         commitment_loss = nn.functional.mse_loss(z_e, z_q.detach())
         if self.use_EMA:
             codebook_loss = nn.functional.mse_loss(z_e.detach(), z_q)
