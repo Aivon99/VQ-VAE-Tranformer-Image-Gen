@@ -171,29 +171,29 @@ class VQ_VAE(nn.Module):
         self.use_EMA = use_EMA
         self.beta = beta
 
+    @torch.no_grad()
     def compute_indices(self, x: torch.Tensor) -> torch.Tensor:
         """
         64x64 image tensor -> 8x8 index tensor (without computing gradients)
         """
-        with torch.no_grad():
-            x = self.encoder(x)
-            return self.quantizer.nearest_neighbor_indices(x)
+        x = self.encoder(x)
+        return self.quantizer.nearest_neighbor_indices(x)
 
+    @torch.no_grad()
     def compute_latents(self, x: torch.Tensor) -> torch.Tensor:
         """
         64x64 image tensor -> 8x8 quantized latent tensor (without computing gradients)
         """
-        with torch.no_grad():
-            x = self.encoder(x)
-            return self.quantizer(x)
+        x = self.encoder(x)
+        return self.quantizer(x)
 
+    @torch.no_grad()
     def reconstruct(self, x: torch.Tensor) -> torch.Tensor:
         """
         64x64 image tensor -> 64x64 reconstructed image tensor (without computing gradients)
         """
-        with torch.no_grad():
-            x = self.compute_latents(x)
-            return self.decoder(x)
+        x = self.compute_latents(x)
+        return self.decoder(x)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """
