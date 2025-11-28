@@ -180,20 +180,20 @@ class VQ_VAE(nn.Module):
         return self.quantizer.nearest_neighbor_indices(x)
 
     @torch.no_grad()
-    def compute_latents(self, x: torch.Tensor) -> torch.Tensor:
+    def reconstruct_from_indices(self, x: torch.Tensor) -> torch.Tensor:
         """
-        64x64 image tensor -> 8x8 quantized latent tensor (without computing gradients)
+        8x8 index tensor -> 64x64 reconstructed image tensor (without computing gradients)
         """
-        x = self.encoder(x)
-        return self.quantizer(x)
+        x = self.quantizer.get_embeddings(x)
+        return self.decoder(x)
 
     @torch.no_grad()
     def reconstruct(self, x: torch.Tensor) -> torch.Tensor:
         """
         64x64 image tensor -> 64x64 reconstructed image tensor (without computing gradients)
         """
-        x = self.compute_latents(x)
-        return self.decoder(x)
+        x = self.compute_indices(x)
+        return self.reconstruct_from_indices(x)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """
