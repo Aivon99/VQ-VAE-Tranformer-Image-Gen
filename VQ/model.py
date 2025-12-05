@@ -157,6 +157,8 @@ class Quantizer(nn.Module):
         z_q = nn.functional.embedding(idx, self.e)    # (B,H,W,EmbDim)
         return z_q.permute(0,3,1,2).contiguous()
 
+    
+    
     def forward(self, x):
         B, _, H, W = x.shape
         z = x.permute(0,2,3,1).reshape(-1, EMBEDDING_DIM)
@@ -169,20 +171,23 @@ class Quantizer(nn.Module):
             )
         idx = dist.argmin(1)
 
-        # EMA updates
+        # ----- FIXED EMA BLOCK -----
         if self.use_EMA and self.training:
-            n_i = torch.bincount(idx, minlength=NUM_EMBEDDINGS).float()
-            m_i = torch.zeros_like(self.e)
-            m_i.index_add_(0, idx, z)
+            with torch.no_grad():
+                # use detached z so no grad is tracked
+                z_flat = z.detach()
+                n_i = torch.bincount(idx, minlength=NUM_EMBEDDINGS).float()
+                m_i = torch.zeros_like(self.e)
+                m_i.index_add_(0, idx, z_flat)
 
-            self.N = self.decay * self.N + (1 - self.decay) * n_i
-            self.m = self.decay * self.m + (1 - self.decay) * m_i
-            self.e = self.m / (self.N[:,None] + 1e-8)
+                # in-place EMA updates, no new graph
+                self.N.mul_(self.decay).add_((1.0 - self.decay) * n_i)
+                self.m.mul_(self.decay).add_((1.0 - self.decay) * m_i)
+                self.e.copy_(self.m / (self.N[:, None] + 1e-8))
+        # ---------------------------
 
-        z_q = nn.functional.embedding(idx, self.e).view(B,H,W,EMBEDDING_DIM)
+        z_q = nn.functional.embedding(idx, self.e).view(B, H, W, EMBEDDING_DIM)
         return z_q.permute(0,3,1,2).contiguous()
-
-
 
 class VQ_VAE(nn.Module):
     def __init__(self, encoder, decoder, quantizer, use_EMA=False, beta=0.25):
