@@ -221,7 +221,7 @@ class VQ_VAE(nn.Module):
 
         recon = self.decoder(z_q_st)
 
-        recon_loss = nn.functional.mse_loss(recon, x)
+        recon_loss = nn.functional.l1_loss(recon, x)
         commit_loss = nn.functional.mse_loss(z_e, z_q.detach())
 
         if self.use_EMA:
