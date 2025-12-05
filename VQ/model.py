@@ -2,11 +2,11 @@ import torch
 import torch.nn as nn
 
 
-LATENT_W = LATENT_H = 8     # latent grid 8x8 → 64 tokens
-IMG_W = LATENT_W * 8        # 64×64 images
-IMG_H = LATENT_H * 8
+LATENT_W = LATENT_H = 16     # latent grid 8x8 → 64 tokens
+IMG_W = LATENT_W * 4        # 64×64 images
+IMG_H = LATENT_H * 4
 
-EMBEDDING_DIM = LATENT_W * LATENT_H   # 64-dimensional embedding
+EMBEDDING_DIM = LATENT_W * LATENT_H   # 128-dimensional embedding
 NUM_EMBEDDINGS = 512
 HIDDEN_CHANNELS = 256
 
@@ -70,7 +70,7 @@ class Encoder(nn.Module):
             ResidualBlock(),
             nn.Conv2d(HIDDEN_CHANNELS, HIDDEN_CHANNELS, kernel_size=4, stride=2, padding=1),  # 32→16
             ResidualBlock(),
-            nn.Conv2d(HIDDEN_CHANNELS, EMBEDDING_DIM, kernel_size=4, stride=2, padding=1),     # 16→8
+            nn.Conv2d(HIDDEN_CHANNELS, EMBEDDING_DIM, kernel_size=4, stride=1, padding=1),     # 16→16
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -90,14 +90,14 @@ class Decoder(nn.Module):
 
         body = []
 
-        # 8×8 resolution
+        # 16×16 resolution
         body.append(nn.Conv2d(EMBEDDING_DIM, HIDDEN_CHANNELS, kernel_size=1))
         body.append(ResidualBlock())
         body.append(SelfAttention2d(HIDDEN_CHANNELS, num_heads=4))
         body.append(ResidualBlock())
-
-        # 8 → 16
-        body.append(nn.Upsample(scale_factor=2, mode="nearest"))
+ 
+        # 16 → 16
+        body.append(nn.Upsample(scale_factor=1, mode="nearest"))
         body.append(nn.Conv2d(HIDDEN_CHANNELS, HIDDEN_CHANNELS, kernel_size=3, padding=1))
         body.append(ResidualBlock())
 
