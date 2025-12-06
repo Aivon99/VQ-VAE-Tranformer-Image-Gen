@@ -35,11 +35,36 @@ class DecoderBlock(nn.Module):
         )
         self.norm2 = nn.LayerNorm(D_MODEL)
 
-    def forward(self, x):
-        # CAUSAL ATTENTION
-        attn_out, _ = self.attn(x, x, x, is_causal=True)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: (B, T) after embedding, then (B, T, C) before this block
+        assuming batch_first=True in MultiheadAttention
+        """
+        B, T, C = x.shape
+
+        # --- Causal mask: prevent attending to future positions ---
+        # attn_mask shape: (T, T), where mask[i, j] = -inf if j > i
+        # so position i cannot see positions j > i
+        attn_mask = torch.full((T, T), float("-inf"), device=x.device, dtype=x.dtype)
+        attn_mask = torch.triu(attn_mask, diagonal=1)  # upper triangle (strict)
+
+        # --- Self-attention ---
+        # MultiheadAttention with batch_first=True expects (B, T, C)
+        attn_out, _ = self.attn(
+            x,          # query
+            x,          # key
+            x,          # value
+            attn_mask=attn_mask,
+            need_weights=False,
+        )
+
+        # Residual + norm (post-norm)
         x = self.norm1(x + attn_out)
-        x = self.norm2(x + self.ff(x))
+
+        # Feed-forward block (typically MLP with activation)
+        ff_out = self.ff(x)
+        x = self.norm2(x + ff_out)
+
         return x
 
 
