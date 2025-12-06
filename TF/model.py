@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 VOCAB_SIZE = 512 + 1   # 512 codebook entries + BOS
-SEQ_LEN    = 64        # LATENT_H * LATENT_W = 8×8
+SEQ_LEN    = 16*16          # LATENT_H * LATENT_W = 16x16
 BOS_ID     = 512
 
 D_MODEL = 256
