@@ -70,7 +70,8 @@ class Encoder(nn.Module):
             ResidualBlock(),
             nn.Conv2d(HIDDEN_CHANNELS, HIDDEN_CHANNELS, kernel_size=4, stride=2, padding=1),  # 32→16
             ResidualBlock(),
-            nn.Conv2d(HIDDEN_CHANNELS, EMBEDDING_DIM, kernel_size=4, stride=1, padding=1),     # 16→16
+            nn.Conv2d(HIDDEN_CHANNELS, EMBEDDING_DIM, kernel_size=3, stride=1, padding=1),     # 16→16
+            
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
