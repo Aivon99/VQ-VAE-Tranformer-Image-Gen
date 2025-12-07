@@ -1,120 +1,93 @@
 import torch
 import torch.nn as nn
 
-
-VOCAB_SIZE = 512 + 1   # 512 codebook entries + BOS
-SEQ_LEN    = 16*16          # LATENT_H * LATENT_W = 16x16
-BOS_ID     = 512
+# hyperparameters for model
+VOCAB_SIZE = 512
+SEQ_LEN = 256
+BOS_ID = VOCAB_SIZE + 1
 
 D_MODEL = 256
 N_HEADS = 4
 N_LAYERS = 6
-D_FF = 4 * D_MODEL
 DROPOUT = 0.1
-
 
 class DecoderBlock(nn.Module):
     """
-    GPT-style Transformer decoder block with causal self-attention.
+    Standard decoder self-attention block with causal masking
     """
-    def __init__(self):
+    def __init__(self, d_model: int, n_heads: int, dropout: float):
         super().__init__()
-        self.attn = nn.MultiheadAttention(
-            embed_dim=D_MODEL,
-            num_heads=N_HEADS,
-            dropout=DROPOUT,
-            batch_first=True,
-        )
-
-        self.norm1 = nn.LayerNorm(D_MODEL)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=n_heads, dropout=DROPOUT, batch_first=True)
+        self.norm2 = nn.LayerNorm(d_model)
         self.ff = nn.Sequential(
-            nn.Linear(D_MODEL, D_FF),
+            nn.Linear(d_model, d_model * 4),
             nn.GELU(),
-            nn.Linear(D_FF, D_MODEL),
-            nn.Dropout(DROPOUT),
-        )
-        self.norm2 = nn.LayerNorm(D_MODEL)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        x: (B, T) after embedding, then (B, T, C) before this block
-        assuming batch_first=True in MultiheadAttention
-        """
-        B, T, C = x.shape
-
-        # --- Causal mask: prevent attending to future positions ---
-        # attn_mask shape: (T, T), where mask[i, j] = -inf if j > i
-        # so position i cannot see positions j > i
-        attn_mask = torch.full((T, T), float("-inf"), device=x.device, dtype=x.dtype)
-        attn_mask = torch.triu(attn_mask, diagonal=1)  # upper triangle (strict)
-
-        # --- Self-attention ---
-        # MultiheadAttention with batch_first=True expects (B, T, C)
-        attn_out, _ = self.attn(
-            x,          # query
-            x,          # key
-            x,          # value
-            attn_mask=attn_mask,
-            need_weights=False,
+            nn.Linear(d_model * 4, d_model),
+            nn.Dropout(dropout)
         )
 
-        # Residual + norm (post-norm)
-        x = self.norm1(x + attn_out)
-
-        # Feed-forward block (typically MLP with activation)
-        ff_out = self.ff(x)
-        x = self.norm2(x + ff_out)
-
-        return x
+    def forward(self, x: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x (torch.Tensor) A FloatTensor of shape (B, S, D_MODEL) where S is the sequence we are attending over
+            attn_mask (torch.Tensor) A BoolTensor of shape (S, S) where attn_mask[i, j] = True means the ith token cannot attend to the jth token
+        Returns:
+            transformed (torch.Tensor) A FloatTensor of shape (B, S, D_MODEL) of transformed embeddings
+        """
+        B, S, D = x.shape
+        x_norm = self.norm1(x)
+        x_attn, _ = self.attn(x_norm, x_norm, x_norm, attn_mask=attn_mask)
+        x = x + x_attn
+        return x + self.ff(self.norm2(x))
 
 
 class TransformerPrior(nn.Module):
     """
-    Autoregressive prior over the VQ-VAE code indices.
-    Uses 2D positional embeddings (row+col).
+    Autoregressive Prior for generating unconditional samples of CelebA embeddings
     """
-    def __init__(self, H: int, W: int):
+    def __init__(self):
         super().__init__()
-        assert H * W == SEQ_LEN, "H*W must equal SEQ_LEN"
-
-        self.H = H
-        self.W = W
-
-        self.token_emb = nn.Embedding(VOCAB_SIZE, D_MODEL)
-        self.row_emb   = nn.Embedding(H, D_MODEL)
-        self.col_emb   = nn.Embedding(W, D_MODEL)
-
-        self.blocks = nn.Sequential(*[
-            DecoderBlock() for _ in range(N_LAYERS)
-        ])
+        self.token_embedding = nn.Embedding(VOCAB_SIZE + 1, D_MODEL) # VOCAB_SIZE codebooks and 1 BOS token
+        self.positional_embedding = nn.Embedding(SEQ_LEN, D_MODEL)
+        self.decoder_stack = nn.ModuleList([DecoderBlock(D_MODEL, N_HEADS, DROPOUT) for _ in range(N_LAYERS)])
         self.to_logits = nn.Linear(D_MODEL, VOCAB_SIZE)
 
-    def _get_2d_positions(self, T, device):
-        rows = torch.arange(self.H, device=device).unsqueeze(1).repeat(1, self.W).view(-1)
-        cols = torch.arange(self.W, device=device).unsqueeze(0).repeat(self.H, 1).view(-1)
-        return self.row_emb(rows[:T]) + self.col_emb(cols[:T])  # (T, D)
-
-    def forward(self, x):
-        B, T = x.shape
-        device = x.device
-
-        tok = self.token_emb(x)                 # (B, T, D)
-        pos = self._get_2d_positions(T, device) # (T, D)
-        pos = pos.unsqueeze(0).expand(B, -1, -1)
-
-        h = tok + pos
-        h = self.blocks(h)
-        return self.to_logits(h)
+        self.register_buffer("causal_mask", torch.triu(torch.ones(SEQ_LEN, SEQ_LEN), diagonal=1).bool())
 
     @torch.no_grad()
-    def generate(self, N, temp=1.0):
-        device = next(self.parameters()).device
-        seq = torch.full((N, 1), BOS_ID, dtype=torch.long, device=device)
+    def generate(self, N: int, temp: float = 1.0) -> torch.Tensor:
+        """
+        Args:
+            N (int): The number of sequences to generate
+            temp (float): divides the logits before sampling
+        Returns:
+            sequences (torch.Tensor): A LongTensor of shape (N, SEQ_LEN) of generates sequences
+        """
+        seq = torch.full((N, 1), BOS_ID, dtype=torch.long, device=next(self.parameters()).device)
 
-        for _ in range(SEQ_LEN):
-            logits = self(seq)[:, -1] / temp
+        for i in range(SEQ_LEN):
+            logits = self(seq)               # (N, i + 1, VOCAB_SIZE)
+            logits = logits[:, -1, :] / temp # (N, VOCAB_SIZE)
             probs = torch.softmax(logits, dim=-1)
-            next_tok = torch.multinomial(probs, 1)
-            seq = torch.cat([seq, next_tok], dim=1)
+            next_token = torch.multinomial(probs, num_samples=1) # (N, 1)
+            seq = torch.cat([seq, next_token], dim=1) # (N, i + 2)
 
-        return seq[:, 1:]  # strip BOS
+        return seq[:, 1:] # (N, SEQ_LEN)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x (torch.Tensor) a LongTensor of shape (B, S) of integer ids
+        Returns:
+            logits (torch.Tensor) a FloatTensor of shape (B, S, VOCAB_SIZE) of predicted next token logits
+        """
+        B, S = x.shape
+    
+        pos = torch.arange(S, device=x.device)
+        x = self.token_embedding(x) + self.positional_embedding(pos) # (B, S, D) + (S, D)
+
+        mask = self.causal_mask[:S, :S] # type: ignore
+        for i in range(N_LAYERS):
+            x = self.decoder_stack[i](x, attn_mask=mask)
+        return self.to_logits(x)
